@@ -1,139 +1,26 @@
-version: 2
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: https://circleci.com/docs/2.0/configuration-reference
+version: 2.1
 
-workflows:
-  version: 2
-  docs:
-    jobs:
-
-      - test
-
-      - build_dev_image:
-          context: "dev.chainstack | GCP"
-          requires:
-            - test
-          filters:
-            branches:
-              only:
-                - master
-
-      - build_prod_image:
-          context: "prod.chainstack | GCP"
-          requires:
-            - test
-          filters:
-            branches:
-              only:
-               - prod
-
-      - hold_prod:
-          type: approval
-          requires:
-            - build_prod_image
-
-      - dev_deploy:
-          context: "dev.chainstack | GCP"
-          requires:
-            - build_dev_image
-
-      - prod_deploy:
-          context: "prod.chainstack | GCP"
-          requires:
-            - hold_prod
-
-_run:
-  gcloud_routine: &gcloud_routine
-    name: gcloud routine
-    command: |
-      set -x
-      echo $GCLOUD_SERVICE_KEY > /gcloud-service-key.json
-      gcloud auth activate-service-account --key-file=/gcloud-service-key.json
-      gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
-      gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
-      gcloud auth configure-docker --quiet
-
-_job_deploy: &deploy
-  docker:
-      - image: chainstack/builder:latest
-  steps:
-
-    - checkout
-
-    - run: *gcloud_routine
-
-    - run:
-        name: gcloud clusters get-credentials
-        command: |
-            gcloud --quiet container clusters get-credentials ${GOOGLE_CLUSTER_NAME} --region ${GOOGLE_REGION} --project ${GOOGLE_PROJECT_ID}
-
-    - run:
-       name: Helming
-       command: |
-        set -x
-        helm3 repo add stable https://charts.helm.sh/stable
-        helm3 repo add cs ${HELM_REPO}
-        helm3 repo update
-
-    - run:
-       name: Rolling out the service
-       command: |
-        set -x
-        helm3 upgrade docs cs/chainstack-docs \
-          --install --wait --timeout 180s \
-          --set image.tag=${CIRCLE_SHA1},ingress.host=${DOCS_HOSTNAME},project=${GOOGLE_PROJECT_ID},auth.enabled=${AUTH_ENABLED}
-        sleep 10 # TODO: Implement k8s jobs for Post-deploy
-        helm3 status docs
-
-_job_build_image: &build_image
-  docker:
-    - image: chainstack/builder:latest
-  steps:
-    - setup_remote_docker:
-       version: stable
-
-    - checkout
-
-    - run: *gcloud_routine
-
-    - run:
-        name: Create service version
-        command: |
-          set -x
-          sed -i -e "s:{BUILD_NUM}:${CIRCLE_BUILD_NUM}.${CIRCLE_BRANCH}:g" ./VERSION
-
-    - run:
-       name: Build production image
-       command: |
-         set -x
-         docker build \
-           --build-arg CONSOLE_HOSTNAME=${HOSTNAME} \
-           --build-arg WEBSITE_HOSTNAME=${WEBSITE_HOSTNAME} \
-           --build-arg DOCS_HOSTNAME=${DOCS_HOSTNAME} \
-           --build-arg ALGOLIA_KEY=${ALGOLIA_KEY} \
-           --build-arg GA_ID=${GA_ID} \
-           -t ${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} .
-         docker tag ${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} ${GOOGLE_GCR_HOSTNAME}/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1}
-         docker tag ${GOOGLE_GCR_HOSTNAME}/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1} ${GOOGLE_GCR_HOSTNAME}/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}:latest
-         docker push ${GOOGLE_GCR_HOSTNAME}/${GOOGLE_PROJECT_ID}/${CIRCLE_PROJECT_REPONAME}
-
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
 jobs:
-
-  test:
+  say-hello:
+    # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
+    # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
     docker:
-      - image: circleci/node:16
+      - image: cimg/base:stable
+    # Add steps to the job
+    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
     steps:
       - checkout
-      - run: yarn install
-      - run: yarn run build
-      - run: yarn run check-md
+      - run:
+          name: "Say hello"
+          command: "echo Hello, World!"
 
-  build_dev_image:
-    <<: *build_image
-
-  build_prod_image:
-    <<: *build_image
-
-  dev_deploy:
-    <<: *deploy
-
-  prod_deploy:
-    <<: *deploy
+# Invoke jobs via workflows
+# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+workflows:
+  say-hello-workflow:
+    jobs:
+      - say-hello
